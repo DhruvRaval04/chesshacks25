@@ -5,8 +5,19 @@ This module exposes key helpers so training scripts can import from
 `rl_chess` without referencing submodules directly.
 """
 
-from .chess_env import ChessEnv
+from .chess_env import ChessEnv, RewardConfig
 from .import opponents
-from .position_eval import get_chess_evaluation
+from .position_eval import (
+    get_chess_evaluation,
+    evaluation_delta_reward,
+    shutdown_engine,
+)
 
-__all__ = ["ChessEnv", "opponents", "get_chess_evaluation"]
+__all__ = [
+    "ChessEnv",
+    "RewardConfig",
+    "opponents",
+    "get_chess_evaluation",
+    "evaluation_delta_reward",
+    "shutdown_engine",
+]
