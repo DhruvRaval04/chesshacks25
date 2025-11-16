@@ -24,6 +24,15 @@ from .move_encoding import (
 from . import opponents
 from .position_eval import evaluation_delta_reward
 
+PIECE_VALUES = {
+    chess.PAWN: 1.0,
+    chess.KNIGHT: 3.0,
+    chess.BISHOP: 3.0,
+    chess.ROOK: 5.0,
+    chess.QUEEN: 9.0,
+    chess.KING: 0.0,
+}
+
 RewardFn = Callable[
     [chess.Board, chess.Board, chess.Color, Optional[str]],
     float,
@@ -37,7 +46,8 @@ class RewardConfig:
     loss: float = -20.0
     draw: float = 0.0
     illegal_move: float = -20.0
-    repetition_penalty: float = -2.0
+    repetition_penalty: float = -20.0
+    capture_bonus: float = 5.0
     reward_fn: Optional[RewardFn] = evaluation_delta_reward
 
 
@@ -58,7 +68,7 @@ class ChessEnv(gym.Env):
         else:
             self.agent_color = agent_color
         self.opponent_policy = (
-            opponent_policy or opponents.random_policy
+            opponent_policy or opponents.create_stockfish_policy(skill_level=10, depth=12)
         )
         self.reward_config = reward_config
         self.max_moves = max_moves
@@ -208,8 +218,11 @@ class ChessEnv(gym.Env):
                 agent_color,
                 result,
             )
+        capture_reward = self._capture_reward(
+            board_before, board_after_agent, agent_color
+        )
         terminal_bonus = self._result_reward(result)
-        return dense_reward + terminal_bonus
+        return dense_reward + capture_reward + terminal_bonus
 
     def _legal_moves_mask(self) -> np.ndarray:
         mask = np.zeros(self.action_space.n, dtype=np.float32)
@@ -230,6 +243,30 @@ class ChessEnv(gym.Env):
         if not reasons:
             return 0.0, reasons
         return self.reward_config.repetition_penalty, reasons
+
+    def _capture_reward(
+        self,
+        board_before: chess.Board,
+        board_after_agent: chess.Board,
+        agent_color: chess.Color,
+    ) -> float:
+        if self.reward_config.capture_bonus == 0.0:
+            return 0.0
+        opponent_color = (
+            chess.BLACK if agent_color == chess.WHITE else chess.WHITE
+        )
+        before_value = self._material_value(board_before, opponent_color)
+        after_value = self._material_value(board_after_agent, opponent_color)
+        if after_value >= before_value:
+            return 0.0
+        return (before_value - after_value) * self.reward_config.capture_bonus
+
+    @staticmethod
+    def _material_value(board: chess.Board, color: chess.Color) -> float:
+        total = 0.0
+        for piece_type, value in PIECE_VALUES.items():
+            total += len(board.pieces(piece_type, color)) * value
+        return total
 
     def _sample_random_color(self) -> chess.Color:
         return chess.WHITE if np.random.rand() < 0.5 else chess.BLACK

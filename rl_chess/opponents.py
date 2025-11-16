@@ -74,3 +74,55 @@ def greedy_material_policy(board: chess.Board) -> chess.Move:
     best = max(legal, key=score)
     return best
 
+def stockfish_policy(board: chess.Board, skill_level: int = 20, depth: int = 15, time_limit: float = 0.1) -> chess.Move:
+    """
+    Uses the Stockfish engine to select the best move.
+
+    Args:
+        board (chess.Board): The current board state.
+        skill_level (int): Stockfish skill level (0-20, where 20 is strongest)
+        depth (int): Search depth for the engine (default: 15)
+        time_limit (float): Time limit in seconds for move calculation (default: 0.1)
+
+    Returns:
+        chess.Move: The best move according to Stockfish
+    """
+    from .position_eval import _get_engine
+    import chess.engine
+    
+    engine = _get_engine()
+    
+    # Configure skill level (0-20 range)
+    engine.configure({"Skill Level": skill_level})
+    
+    try:
+        # Use both depth and time constraints
+        result = engine.play(
+            board, 
+            chess.engine.Limit(depth=depth, time=time_limit)
+        )
+        return result.move
+    except chess.engine.EngineError as e:
+        print(f"[stockfish_policy] Engine error: {e}, falling back to random move")
+        return random_legal_move(board)
+
+
+def create_stockfish_policy(skill_level: int = 20, depth: int = 15, time_limit: float = 0.1):
+    """
+    Factory function to create a Stockfish policy with specific parameters.
+    
+    Args:
+        skill_level (int): Stockfish skill level (0-20)
+        depth (int): Search depth
+        time_limit (float): Time limit in seconds
+    
+    Returns:
+        Callable: A policy function that takes only a board as argument
+    
+    Example:
+        >>> weak_stockfish = create_stockfish_policy(skill_level=5, depth=8)
+        >>> env = ChessEnv(opponent_policy=weak_stockfish)
+    """
+    def policy(board: chess.Board) -> chess.Move:
+        return stockfish_policy(board, skill_level=skill_level, depth=depth, time_limit=time_limit)
+    return policy
