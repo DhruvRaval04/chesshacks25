@@ -1,0 +1,8 @@
+{
+  "action_dim": 20160,
+  "board_channels": 12,
+  "board_size": 8,
+  "conv_channels": 64,
+  "extra_feats": 7,
+  "linear_dim": 512
+}
