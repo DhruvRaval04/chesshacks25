@@ -42,12 +42,17 @@ OpponentPolicy = Callable[[chess.Board], chess.Move]
 
 @dataclass
 class RewardConfig:
-    win: float = 20.0
-    loss: float = -20.0
-    draw: float = 0.0
-    illegal_move: float = -20.0
-    repetition_penalty: float = -20.0
-    capture_bonus: float = 5.0
+    """
+    Reward shaping tuned so dense eval deltas matter relative to outcomes.
+    """
+
+    win: float = 60.0
+    loss: float = -60.0
+    draw: float = -5.0
+    illegal_move: float = -30.0
+    repetition_penalty: float = -5.0
+    capture_bonus: float = 2.0
+    living_reward: float = -0.05
     reward_fn: Optional[RewardFn] = evaluation_delta_reward
 
 
@@ -139,6 +144,7 @@ class ChessEnv(gym.Env):
                 board_after_agent,
                 self.agent_color,
                 result,
+                board_after_env=board_after_agent,
             )
             reward += penalty
             observation = self._get_obs()
@@ -154,6 +160,7 @@ class ChessEnv(gym.Env):
             board_after_agent,
             self.agent_color,
             result if terminated else None,
+            board_after_env=self.board,
         )
         reward += penalty
         observation = self._get_obs()
@@ -209,6 +216,8 @@ class ChessEnv(gym.Env):
         board_after_agent: chess.Board,
         agent_color: chess.Color,
         result: Optional[str],
+        *,
+        board_after_env: Optional[chess.Board] = None,
     ) -> float:
         dense_reward = 0.0
         if self.reward_config.reward_fn is not None:
@@ -219,10 +228,17 @@ class ChessEnv(gym.Env):
                 result,
             )
         capture_reward = self._capture_reward(
-            board_before, board_after_agent, agent_color
+            board_before,
+            board_after_agent,
+            board_after_env or board_after_agent,
+            agent_color,
         )
         terminal_bonus = self._result_reward(result)
-        return dense_reward + capture_reward + terminal_bonus
+        total_reward = dense_reward + capture_reward + terminal_bonus
+        living_reward = self.reward_config.living_reward
+        if living_reward != 0.0:
+            total_reward += living_reward
+        return total_reward
 
     def _legal_moves_mask(self) -> np.ndarray:
         mask = np.zeros(self.action_space.n, dtype=np.float32)
@@ -248,6 +264,7 @@ class ChessEnv(gym.Env):
         self,
         board_before: chess.Board,
         board_after_agent: chess.Board,
+        board_after_env: chess.Board,
         agent_color: chess.Color,
     ) -> float:
         if self.reward_config.capture_bonus == 0.0:
@@ -255,11 +272,22 @@ class ChessEnv(gym.Env):
         opponent_color = (
             chess.BLACK if agent_color == chess.WHITE else chess.WHITE
         )
-        before_value = self._material_value(board_before, opponent_color)
-        after_value = self._material_value(board_after_agent, opponent_color)
-        if after_value >= before_value:
+        # Positive when the opponent loses material due to the agent move.
+        opponent_before = self._material_value(board_before, opponent_color)
+        opponent_after_agent = self._material_value(
+            board_after_agent, opponent_color
+        )
+        opponent_delta = opponent_before - opponent_after_agent
+
+        # Negative when the agent loses material during the opponent reply.
+        agent_before = self._material_value(board_before, agent_color)
+        agent_after_env = self._material_value(board_after_env, agent_color)
+        agent_delta = agent_after_env - agent_before
+
+        net_delta = opponent_delta + agent_delta
+        if net_delta == 0.0:
             return 0.0
-        return (before_value - after_value) * self.reward_config.capture_bonus
+        return net_delta * self.reward_config.capture_bonus
 
     @staticmethod
     def _material_value(board: chess.Board, color: chess.Color) -> float:
